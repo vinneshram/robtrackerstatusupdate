@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Robbing Items Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="max-w-6xl mx-auto p-6">
+    <header class="mb-6">
+      <h1 class="text-2xl font-bold">Robbing Items Tracking</h1>
+      <p class="text-sm text-gray-600">Filter by Aircraft and System to view entries.</p>
+    </header>
+
+    <!-- Login Section -->
+    <section id="login-section" class="bg-white rounded-2xl shadow p-6 max-w-md">
+      <h2 class="text-lg font-semibold mb-4">Staff Login</h2>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium">Staff ID</label>
+          <input id="staff-id" class="mt-1 w-full border rounded-lg p-2" placeholder="e.g. staff01" />
+        </div>
+        <div>
+          <label class="block text-sm font-medium">Password</label>
+          <input id="staff-pass" type="password" class="mt-1 w-full border rounded-lg p-2" placeholder="••••" />
+        </div>
+        <button id="login-btn" class="w-full py-2 rounded-xl bg-black text-white">Login</button>
+        <p id="login-msg" class="text-sm text-red-600"></p>
+      </div>
+    </section>
+
+    <!-- Main App -->
+    <section id="app-section" class="hidden">
+      <div class="bg-white rounded-2xl shadow p-6">
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-sm font-medium">Aircraft</label>
+            <select id="sel-aircraft" class="mt-1 border rounded-lg p-2 min-w-[12rem]"></select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium">System</label>
+            <select id="sel-system" class="mt-1 border rounded-lg p-2 min-w-[12rem]"></select>
+          </div>
+          <button id="search-btn" class="px-4 py-2 rounded-xl bg-black text-white">Search</button>
+          <button id="export-btn" class="px-4 py-2 rounded-xl border">Export CSV</button>
+          <div class="ml-auto flex gap-2">
+            <button id="edit-btn" class="hidden px-4 py-2 rounded-xl bg-yellow-500 text-white">Edit</button>
+            <button id="save-btn" class="hidden px-4 py-2 rounded-xl bg-blue-600 text-white">Save Changes</button>
+            <button id="discard-btn" class="hidden px-4 py-2 rounded-xl bg-gray-500 text-white">Discard Changes</button>
+            <button id="clear-btn" class="px-4 py-2 rounded-xl border">Clear</button>
+            <button id="logout-btn" class="px-4 py-2 rounded-xl border">Logout</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4 bg-white rounded-2xl shadow">
+        <div class="p-4 flex justify-between items-center">
+          <p id="count" class="text-sm text-gray-600">0 results</p>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm" id="results-table">
+            <thead class="bg-gray-50" id="thead"></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Pie Chart Section -->
+      <div class="mt-6 bg-white rounded-2xl shadow p-6 hidden" id="chart-section">
+        <h2 class="text-lg font-semibold mb-2">AJL Status Summary (9M-LNR)</h2>
+        <p id="chart-numbers" class="mb-4 text-gray-700 font-medium"></p>
+        <canvas id="statusChart" width="400" height="400"></canvas>
+      </div>
+    </section>
+  </div>
+
+<script>
+const loginSection=document.getElementById('login-section');
+const appSection=document.getElementById('app-section');
+const loginBtn=document.getElementById('login-btn');
+const loginMsg=document.getElementById('login-msg');
+const staffId=document.getElementById('staff-id');
+const staffPass=document.getElementById('staff-pass');
+const selAircraft=document.getElementById('sel-aircraft');
+const selSystem=document.getElementById('sel-system');
+const searchBtn=document.getElementById('search-btn');
+const exportBtn=document.getElementById('export-btn');
+const clearBtn=document.getElementById('clear-btn');
+const logoutBtn=document.getElementById('logout-btn');
+const editBtn=document.getElementById('edit-btn');
+const saveBtn=document.getElementById('save-btn');
+const discardBtn=document.getElementById('discard-btn');
+
+const API = "";
+let chart=null;
+let backupHTML="";
+let currentData=null;
+
+// --- Login ---
+loginBtn.addEventListener('click', async ()=>{
+  const id=staffId.value.trim(), pw=staffPass.value.trim();
+  if(!id||!pw){loginMsg.textContent="Enter ID and password";return;}
+  try{
+    const res=await fetch(API+'/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,password:pw})});
+    if(!res.ok){loginMsg.textContent="Login failed";return;}
+    const j=await res.json();
+    if(j.success){
+      loginSection.classList.add('hidden');appSection.classList.remove('hidden');loadMeta();
+    } else loginMsg.textContent="Invalid login";
+  }catch(e){loginMsg.textContent="Server error";console.error(e);}
+});
+
+async function loadMeta(){
+  const res=await fetch(API+'/api/meta');
+  const j=await res.json();
+  selAircraft.innerHTML='<option value="">--All--</option>'+j.aircrafts.map(v=>`<option>${v}</option>`).join('');
+  selSystem.innerHTML='<option value="">--All--</option>'+j.systems.map(v=>`<option>${v}</option>`).join('');
+}
+
+searchBtn.addEventListener('click', async ()=>{
+  const res=await fetch(API+'/api/search',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({aircraft:selAircraft.value,system:selSystem.value})});
+  const j=await res.json();currentData=j;renderTable(j);updateChart();
+  if(j.count>0) editBtn.classList.remove('hidden');
+});
+
+// --- Export CSV ---
+exportBtn.addEventListener('click', ()=>{
+  const table=document.getElementById('results-table');
+  let csv=[];for(let r of table.rows){let row=[];for(let c of r.cells){row.push('"'+c.textContent.replace(/"/g,'""')+'"')}csv.push(row.join(','));}
+  const blob=new Blob([csv.join('\n')],{type:'text/csv'});const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');a.href=url;a.download='export.csv';a.click();URL.revokeObjectURL(url);
+});
+
+// --- Clear / Logout ---
+clearBtn.addEventListener('click',()=>{
+  selAircraft.value="";selSystem.value="";
+  document.getElementById('thead').innerHTML="";
+  document.getElementById('tbody').innerHTML="";
+  document.getElementById('count').textContent="0 results";
+  document.getElementById('chart-section').classList.add('hidden');
+  editBtn.classList.add('hidden');saveBtn.classList.add('hidden');discardBtn.classList.add('hidden');
+});
+logoutBtn.addEventListener('click',()=>{
+  appSection.classList.add('hidden');
+  loginSection.classList.remove('hidden');
+  staffId.value="";staffPass.value="";
+});
+
+// --- Render grouped table ---
+function renderTable(data){
+  const thead=document.getElementById('thead');
+  const tbody=document.getElementById('tbody');
+  const count=document.getElementById('count');
+  thead.innerHTML='';tbody.innerHTML='';
+  count.textContent=`${data.count} results`;
+  if(!data.columns||!data.rows) return;
+
+  // header
+  const trh=document.createElement('tr');
+  data.columns.forEach(c=>{
+    const th=document.createElement('th');
+    th.className='px-4 py-2 border bg-gray-50';
+    th.textContent=c;trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+
+  // group by AJL
+  const groups={};
+  data.rows.forEach(r=>{
+    const ajl=r['AJL/DMI']||'';
+    if(!groups[ajl]) groups[ajl]=[];
+    groups[ajl].push(r);
+  });
+
+  Object.keys(groups).forEach(ajl=>{
+    const rows=groups[ajl];
+    const rowspan=rows.length;
+    const ajlStatus=rows[0]['Status'] || 'OPEN';
+
+    rows.forEach((r,i)=>{
+      const tr=document.createElement('tr');
+      data.columns.forEach(c=>{
+        const td=document.createElement('td');
+        td.className='px-4 py-2 border';
+
+        if(c==='NO' && i===0){
+          td.rowSpan=rowspan;td.textContent=r['NO'];
+        }
+        else if(c==='AJL/DMI' && i===0){
+          td.rowSpan=rowspan;
+          td.innerHTML=`<div><span class="ajl-text" data-id="${r.__id}" data-col="AJL/DMI">${r['AJL/DMI'] ?? ''}</span></div>
+            <div class="mt-2 flex items-center gap-2">
+              <input type="checkbox" id="ajl-${ajl}" ${ajlStatus==='CLOSED'?'checked':''}>
+              <label id="ajl-label-${ajl}" for="ajl-${ajl}">${ajlStatus}</label>
+            </div>`;
+        }
+        else if(c==='BOOK' && i===0){
+          td.rowSpan=rowspan;td.textContent=r['BOOK']??'';
+        }
+        else if(c==='DEFECT/TASK' && i===0){
+          td.rowSpan=rowspan;td.textContent=r['DEFECT/TASK']??'';
+        }
+        else if(c==='SPARES'){
+          const toggleState = r['Toggle']==='GREEN' ? 'bg-green-500' : 'bg-red-500';
+          td.innerHTML=`
+            <div class="flex items-center gap-2">
+              <span class="spare-text" data-id="${r.__id}" data-col="${c}">${r[c] ?? ''}</span>
+              <button class="toggle-btn w-4 h-4 rounded-full ${toggleState}" data-id="${r.__id}"></button>
+              <button class="remove-row-btn px-2 py-1 bg-red-600 text-white text-xs rounded hidden" data-id="${r.__id}">Remove</button>
+            </div>`;
+        }
+        else{
+          if(i===0 || (c!=='NO'&&c!=='AJL/DMI'&&c!=='BOOK'&&c!=='DEFECT/TASK')){
+            td.textContent=r[c]??'';
+          } else return;
+        }
+        td.dataset.id=r.__id;
+        td.dataset.col=c;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    // --- Add Spare Row button (once per AJL group) ---
+    const trAdd=document.createElement('tr');
+    const tdAdd=document.createElement('td');
+    tdAdd.colSpan=data.columns.length;
+    tdAdd.className="px-4 py-2 border text-center bg-gray-50";
+    tdAdd.innerHTML=`<button class="add-row-btn px-3 py-1 bg-green-600 text-white rounded" data-ajl="${ajl}" data-no="${rows[0]['NO']}" data-defect="${rows[0]['DEFECT/TASK']}" data-book="${rows[0]['BOOK']}">+ Add Spare</button>`;
+    trAdd.appendChild(tdAdd);
+    tbody.appendChild(trAdd);
+  });
+
+  bindToggleButtons();
+  bindAddRowButtons();
+  bindRemoveRowButtons();
+}
+
+// --- Toggle buttons (persist separate state) ---
+function bindToggleButtons(){
+  document.querySelectorAll('.toggle-btn').forEach(btn=>{
+    const newBtn=btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn,btn);
+    newBtn.addEventListener('click',async()=>{
+      const id=newBtn.dataset.id;
+      const isGreen=newBtn.classList.contains('bg-green-500');
+      const newState=isGreen?'RED':'GREEN';
+
+      newBtn.classList.toggle('bg-red-500');
+      newBtn.classList.toggle('bg-green-500');
+
+      try{
+        await fetch(API+'/api/update-toggle',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({id,state:newState})
+        });
+      }catch(err){console.error("Toggle save failed",err);}
+    });
+  });
+}
+
+// --- Add Spare row buttons ---
+function bindAddRowButtons(){
+  document.querySelectorAll('.add-row-btn').forEach(btn=>{
+    const newBtn = btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn, btn);
+
+    newBtn.addEventListener('click', async ()=>{
+      const ajl=newBtn.dataset.ajl;
+      const no=newBtn.dataset.no;
+      const defect=newBtn.dataset.defect;
+      const book=newBtn.dataset.book;
+
+      newBtn.disabled = true;
+      const prevText = newBtn.textContent;
+      newBtn.textContent = 'Adding...';
+
+      try{
+        const res = await fetch(API+'/api/add-row',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({
+            ajl,no,defect,book,updates:{},
+            aircraft: selAircraft.value,
+            system: selSystem.value
+          })
+        });
+        const data = await res.json();
+        if(data && data.success){
+          searchBtn.click();
+        } else {
+          console.error('Add-row response:', data);
+          alert('Failed to add spare (server error)');
+        }
+      }catch(err){
+        console.error('Add row failed',err);
+        alert('Failed to add spare (network/server error)');
+      }finally{
+        newBtn.disabled = false;
+        newBtn.textContent = prevText;
+      }
+    });
+  });
+}
+
+// --- Remove Row buttons ---
+function bindRemoveRowButtons(){
+  document.querySelectorAll('.remove-row-btn').forEach(btn=>{
+    const newBtn=btn.cloneNode(true);
+    btn.parentNode.replaceChild(newBtn,btn);
+    newBtn.addEventListener('click',async()=>{
+      if(!confirm("Delete this spare row?")) return;
+      const id=parseInt(newBtn.dataset.id);
+      try{
+        await fetch(API+'/api/remove-row',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+        alert("Row removed!");searchBtn.click();
+      }catch(e){console.error("Remove row failed",e);}
+    });
+  });
+}
+
+// --- Checkbox change: update server + chart ---
+document.addEventListener('change',async(e)=>{
+  if(e.target.matches('input[type="checkbox"][id^="ajl-"]')){
+    const ajl=e.target.id.replace('ajl-','');
+    const label=document.getElementById(`ajl-label-${ajl}`);
+    const newStatus=e.target.checked?"CLOSED":"OPEN";
+    if(label) label.textContent=newStatus;
+    try{
+      await fetch(API+'/api/update-status',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ajl,status:newStatus})});
+      updateChart();
+    }catch(err){console.error('Failed to update status',err);}
+  }
+});
+
+// --- Chart update ---
+async function updateChart(){
+  try{
+    const res = await fetch(API+'/api/status-summary');
+    const data = await res.json();
+    document.getElementById('chart-numbers').textContent = `Open: ${data.open} | Closed: ${data.closed}`;
+
+    const ctx = document.getElementById('statusChart').getContext('2d');
+    if(chart) chart.destroy();
+
+    chart = new Chart(ctx,{
+      type:'doughnut',   // ✅ fancier doughnut style
+      data:{
+        labels:['OPEN','CLOSED'],
+        datasets:[{
+          data:[data.open,data.closed],
+          backgroundColor:['#f87171','#34d399'], // soft red & green
+          borderWidth:2,
+          borderColor:'#fff', // white border for contrast
+          hoverOffset:20      // nice hover animation
+        }]
+      },
+      options:{
+        responsive:true,
+        maintainAspectRatio:false, // so we can control size
+        plugins:{
+          legend:{
+            position:'bottom',
+            labels:{
+              font:{size:14, weight:'bold'}
+            }
+          },
+          tooltip:{
+            callbacks:{
+              label:(ctx)=>{
+                let total = data.open + data.closed;
+                let value = ctx.raw;
+                let pct = ((value/total)*100).toFixed(1);
+                return `${ctx.label}: ${value} (${pct}%)`;
+              }
+            }
+          }
+        },
+        cutout:'60%' // ✅ makes it a doughnut
+      }
+    });
+
+    // Shrink chart container
+    document.getElementById('statusChart').style.maxWidth="250px";
+    document.getElementById('statusChart').style.maxHeight="250px";
+
+    document.getElementById('chart-section').classList.remove('hidden');
+  }catch(e){console.error('Chart load error',e);}
+}
+
+
+
+// --- Edit mode ---
+editBtn.addEventListener('click',()=>{
+  backupHTML=document.getElementById('tbody').innerHTML;
+
+  document.querySelectorAll('#tbody td').forEach(cell=>{
+    if(cell.dataset && cell.dataset.col && !["SPARES","AJL/DMI"].includes(cell.dataset.col)){
+      cell.contentEditable="true";cell.classList.add("bg-yellow-100");
+    }
+  });
+  document.querySelectorAll('.spare-text').forEach(span=>{span.contentEditable="true";span.classList.add("bg-yellow-100");});
+  document.querySelectorAll('.ajl-text').forEach(span=>{span.contentEditable="true";span.classList.add("bg-yellow-100");});
+
+  document.querySelectorAll('.remove-row-btn').forEach(btn=>btn.classList.remove('hidden'));
+
+  saveBtn.classList.remove('hidden');
+  discardBtn.classList.remove('hidden');
+  editBtn.classList.add('hidden');
+});
+
+// --- Save changes ---
+saveBtn.addEventListener('click',async()=>{
+  const updatesById={};
+  document.querySelectorAll('#tbody [contenteditable="true"]').forEach(el=>{
+    const id=parseInt(el.dataset.id);const col=el.dataset.col;
+    if(!Number.isInteger(id)||!col) return;
+    if(!updatesById[id]) updatesById[id]={};
+    updatesById[id][col]=el.textContent.trim();
+    el.contentEditable="false";el.classList.remove("bg-yellow-100");
+  });
+
+  for(const id in updatesById){
+    try{
+      await fetch(API+'/api/update-row',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:parseInt(id),updates:updatesById[id]})});
+    }catch(err){console.error('Failed to save row',id,err);}
+  }
+  updateChart();bindToggleButtons();
+  alert('Changes saved!');
+
+  document.querySelectorAll('.remove-row-btn').forEach(btn=>btn.classList.add('hidden'));
+
+  editBtn.classList.remove('hidden');saveBtn.classList.add('hidden');discardBtn.classList.add('hidden');
+});
+
+// --- Discard changes ---
+discardBtn.addEventListener('click',()=>{
+  document.getElementById('tbody').innerHTML=backupHTML;
+  bindToggleButtons();
+  editBtn.classList.remove('hidden');
+  saveBtn.classList.add('hidden');
+  discardBtn.classList.add('hidden');
+  document.querySelectorAll('.remove-row-btn').forEach(btn=>btn.classList.add('hidden'));
+});
+</script>
+</body>
+</html>

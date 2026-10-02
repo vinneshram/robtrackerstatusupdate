@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AJL Status Chart</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="max-w-3xl mx-auto p-6">
+    <header class="mb-6 flex justify-between items-center">
+      <h1 class="text-2xl font-bold">AJL Open vs Closed</h1>
+      <a href="index.html" class="px-4 py-2 rounded-xl bg-black text-white">← Back</a>
+    </header>
+
+    <div class="bg-white rounded-2xl shadow p-6">
+      <canvas id="statusChart" width="400" height="400"></canvas>
+      <p id="statusCounts" class="mt-4 text-center text-gray-700"></p>
+      <p id="errorMsg" class="mt-2 text-center text-red-500"></p>
+    </div>
+  </div>
+
+<script>
+const API = "";
+let chart;
+
+async function loadChartData() {
+  try {
+    const res = await fetch(API + '/api/status-summary');
+    if (!res.ok) throw new Error("API returned " + res.status);
+    const data = await res.json();
+
+    // Show counts
+    document.getElementById("statusCounts").textContent =
+      `OPEN: ${data.open} | CLOSED: ${data.closed}`;
+
+    const ctx = document.getElementById('statusChart').getContext('2d');
+
+    if (chart) chart.destroy();
+
+    chart = new Chart(ctx, {
+      type: 'pie',
+      data: {
+        labels: ['OPEN', 'CLOSED'],
+        datasets: [{
+          label: 'AJL Status',
+          data: [data.open, data.closed],
+          backgroundColor: ['#f87171', '#34d399'], // red, green
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom' },
+          title: { display: true, text: 'AJL Status Distribution' }
+        }
+      }
+    });
+
+    // clear error message if working
+    document.getElementById("errorMsg").textContent = "";
+  } catch (err) {
+    console.error("Chart error:", err);
+    document.getElementById("errorMsg").textContent = "⚠ Failed to load chart data. Check server logs.";
+  }
+}
+
+// Initial load
+loadChartData();
+// Auto-refresh every 5 seconds
+setInterval(loadChartData, 5000);
+</script>
+</body>
+</html>
+
+
